@@ -8,7 +8,8 @@
 - **`get_actor_material.py`** - 获取Actor的材质信息
 - **`get_folder_path.py`** - 获取Actor的文件夹路径
 - **`remove_tag.py`** - 移除Actor的标签
-- **`generate_approx_boxes.py`** - 近似盒体自动生成（聚类 + BoxComponent）
+- **`generate_approx_boxes.py`** - 近似盒体自动生成（聚类 + BoxComponent/Cube降级）
+- **`export_mesh_vertices.py`** - 导出StaticMesh顶点到CSV（基于 ProceduralMeshLibrary）
 
 ## 🚀 使用方法
 
@@ -17,7 +18,7 @@
 exec(open("actor_tools/get_actor_name.py").read())
 ```
 
-### 近似盒体生成（聚类 + BoxComponent）
+### 近似盒体生成（聚类 + BoxComponent / Cube降级）
 
 从选中的 `StaticMeshActor` 生成多个近似盒体：
 ```python
@@ -25,10 +26,28 @@ import actor_tools.generate_approx_boxes as g
 g.generate_approx_boxes_from_selected_actor(cluster_count=3, lod_index=0)
 ```
 
-从资产路径生成（可在场景中新建空Actor并附加BoxComponent）：
+从资产路径生成（可在场景中新建空Actor并附加BoxComponent；若组件不可用将降级为Cube静态网格）：
 ```python
 import actor_tools.generate_approx_boxes as g
 g.generate_approx_boxes_from_asset_path('/Game/Path/To/YourStaticMesh', cluster_count=4, lod_index=0, spawn_new_actor=True)
+```
+
+说明：
+- 顶点提取优先使用 `ProceduralMeshLibrary.get_section_from_static_mesh`（与 `export_mesh_vertices.py` 一致）。
+- 若插件或接口不可用，回退到 `MeshDescription` → `Geometry Script` → `KismetProceduralMeshLibrary`。
+- 若仍无法提取顶点，将基于组件 Bounds 或资产 Bounds（`StaticMesh.get_bounds` / `extended_bounds` / `bounding_box`）生成世界轴对齐的近似盒体，并按最长轴切分为 `cluster_count` 个子盒。
+- 在部分UE版本中 `Actor.add_component` 不可用时，会自动降级：生成基础 `Cube` 静态网格Actor并按盒体尺寸缩放；无法加载Cube资产时，会生成空Actor标记位置。
+
+### 顶点导出（CSV）
+
+从资产路径导出顶点到 CSV（基于 `ProceduralMeshLibrary`）：
+```python
+import actor_tools.export_mesh_vertices as ev
+ev.export_vertices_using_proceduralmesh('/Game/Path/To/YourStaticMesh', lod_index=0, out_csv_path='C:/Temp/StaticMesh_Vertices.csv')
+```
+或直接运行脚本：
+```python
+exec(open("actor_tools/export_mesh_vertices.py").read())
 ```
 
 ## 📋 主要功能
@@ -37,6 +56,8 @@ g.generate_approx_boxes_from_asset_path('/Game/Path/To/YourStaticMesh', cluster_
 - **材质分析** - 分析Actor使用的材质
 - **场景组织** - 管理Actor的文件夹结构和标签
 - **数据处理** - 导出为CSV格式便于分析
+- **近似盒体生成** - 对静态网格进行聚类与AABB计算，自动生成多个近似盒体（支持无顶点API环境的降级）
+- **顶点导出** - 从StaticMesh提取顶点并导出为CSV
 
 ## ⚠️ 注意事项
 
@@ -45,3 +66,7 @@ g.generate_approx_boxes_from_asset_path('/Game/Path/To/YourStaticMesh', cluster_
 - 导出的CSV文件会保存在指定路径
 - 不同 Unreal 版本的 Python API 可能有所差异，如遇接口不可用请反馈具体版本号
 - 生成的 BoxComponent 默认使用 `BlockAll` 碰撞，可按需在脚本内调整
+- 若需使用 `ProceduralMeshLibrary` 顶点提取，请启用“Procedural Mesh”插件（提供 `unreal.ProceduralMeshLibrary`）。
+- 若需使用几何脚本路径，请启用“Geometry Scripting”插件（`unreal.GeometryScript*`）。
+- 建议在 StaticMesh 资产上开启 `Allow CPU Access`，以提升顶点读取的成功率。
+- 降级使用基础 `Cube` 资产依赖 Engine 内容或 StarterContent（如 `/Engine/BasicShapes/Cube`），请确保项目已包含或可访问。

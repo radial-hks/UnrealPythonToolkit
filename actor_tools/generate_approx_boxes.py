@@ -91,8 +91,8 @@ def compute_aabb(points):
     return center, extent
 
 def get_points_from_static_mesh(static_mesh, lod_index=0, to_world_transform=None):
-    """从StaticMesh指定LOD提取所有顶点，兼容UE5.1版本。
-    优先使用MeshDescription，其次尝试Geometry Script，最后回退KPL。
+    """从StaticMesh指定LOD提取所有顶点，兼容多版本与插件差异。
+    优先使用 ProceduralMeshLibrary（与 export 脚本一致），其次 MeshDescription，最后 Geometry Script/Kismet。
     """
     points = []
     log = lambda msg: unreal.log(str(msg))
@@ -120,39 +120,71 @@ def get_points_from_static_mesh(static_mesh, lod_index=0, to_world_transform=Non
     except Exception as e:
         log(f"[ApproxBoxes] 无法检查Allow CPU Access: {e}")
 
-    # === 方式 1: 使用 MeshDescription ===
-    log("[ApproxBoxes] 尝试方法1: MeshDescription")
-    mesh_desc = None
-    esml = getattr(unreal, "EditorStaticMeshLibrary", None)
+    # === 方式 1: 使用 ProceduralMeshLibrary（与 export_mesh_vertices.py 一致）===
+    if not points:
 
-    try:
-        if esml:
-            mesh_desc = esml.get_mesh_description(static_mesh, lod_index)
-    except Exception as e:
-        log(f"[ApproxBoxes] EditorStaticMeshLibrary.get_mesh_description失败: {e}")
 
-    if not mesh_desc:
+        log("[ApproxBoxes] 尝试方法1: ProceduralMeshLibrary")
+        pml = hasattr(unreal, "ProceduralMeshLibrary")
+        if not pml:
+            log("[ApproxBoxes] 未找到ProceduralMeshLibrary，可能插件未启用")
+        else:
+            log("[ApproxBoxes] ProceduralMeshLibrary 存在!!!")
+            pml = unreal.ProceduralMeshLibrary
+            try:
+                try:
+                    section_count = static_mesh.get_num_sections(lod_index)
+                except Exception:
+                    section_count = 1
+                total = 0
+                for s in range(section_count):
+                    try:
+                        section = pml.get_section_from_static_mesh(static_mesh, lod_index, s)
+                        vertices = section[0] if (section and len(section) > 0) else []
+                        for v in vertices:
+                            vec = unreal.Vector(v.x, v.y, v.z)
+                            if to_world_transform:
+                                vec = unreal.MathLibrary.transform_location(to_world_transform, vec)
+                            points.append(vec)
+                            total += 1
+                    except Exception as e:
+                        log(f"[ApproxBoxes] Section {s} 提取失败: {e}")
+                log(f"[ApproxBoxes] ProceduralMeshLibrary成功提取 {total} 个顶点")
+            except Exception as e:
+                log(f"[ApproxBoxes] ProceduralMeshLibrary提取失败: {e}")
+
+    # === 方式 2: 使用 MeshDescription（编辑器环境）===
+    if not points:
+        log("[ApproxBoxes] 尝试方法2: MeshDescription")
+        mesh_desc = None
+        esml = getattr(unreal, "EditorStaticMeshLibrary", None)
+
         try:
-            mesh_desc = static_mesh.get_mesh_description(lod_index)
+            if esml:
+                mesh_desc = esml.get_mesh_description(static_mesh, lod_index)
         except Exception as e:
-            log(f"[ApproxBoxes] static_mesh.get_mesh_description失败: {e}")
+            log(f"[ApproxBoxes] EditorStaticMeshLibrary.get_mesh_description失败: {e}")
 
-    if mesh_desc:
-        try:
-            vertex_ids = mesh_desc.get_vertices()
-            for vid in vertex_ids:
-                pos = mesh_desc.get_vertex_position(vid)
-                v = unreal.Vector(pos.x, pos.y, pos.z)
-                if to_world_transform:
-                    v = unreal.KismetMathLibrary.transform_location(to_world_transform, v)
-                points.append(v)
-            log(f"[ApproxBoxes] MeshDescription成功提取{len(points)}个顶点")
-        except Exception as e:
-            log(f"[ApproxBoxes] MeshDescription提取失败: {e}")
-    else:
-        log("[ApproxBoxes] MeshDescription不可用，转入GeometryScript路径")
+        if not mesh_desc:
+            try:
+                mesh_desc = static_mesh.get_mesh_description(lod_index)
+            except Exception as e:
+                log(f"[ApproxBoxes] static_mesh.get_mesh_description失败: {e}")
 
-    # === 方式 2: 使用 Geometry Script (UE5.1 有接口差异) ===
+        if mesh_desc:
+            try:
+                vertex_ids = mesh_desc.get_vertices()
+                for vid in vertex_ids:
+                    pos = mesh_desc.get_vertex_position(vid)
+                    v = unreal.Vector(pos.x, pos.y, pos.z)
+                    if to_world_transform:
+                        v = unreal.KismetMathLibrary.transform_location(to_world_transform, v)
+                    points.append(v)
+                log(f"[ApproxBoxes] MeshDescription成功提取{len(points)}个顶点")
+            except Exception as e:
+                log(f"[ApproxBoxes] MeshDescription提取失败: {e}")
+
+    # === 方式 3: 使用 Geometry Script ===
     if not points:
         try:
             if hasattr(unreal, 'GeometryScriptMeshReadLOD'):
@@ -169,7 +201,6 @@ def get_points_from_static_mesh(static_mesh, lod_index=0, to_world_transform=Non
                         pos = to_world_transform.transform_position(pos)
                     points.append(pos)
             elif hasattr(unreal, 'GeometryScriptLibrary'):
-                # 旧接口回退
                 log("[ApproxBoxes] 使用 GeometryScriptLibrary (旧版接口)")
                 dyn_mesh = unreal.GeometryScriptLibrary.request_and_release_dynamic_mesh_from_global_pool()
                 success = unreal.GeometryScriptLibrary.copy_mesh_from_static_mesh(dyn_mesh, static_mesh)
@@ -184,28 +215,31 @@ def get_points_from_static_mesh(static_mesh, lod_index=0, to_world_transform=Non
         except Exception as e:
             log(f"[ApproxBoxes] GeometryScript 提取失败: {e}")
 
-    # === 方式 3: KismetProceduralMeshLibrary (最终回退) ===
+    # === 方式 4: KismetProceduralMeshLibrary（极少数旧项目）===
     if not points:
-        log("[ApproxBoxes] 尝试方法3: KismetProceduralMeshLibrary")
+        log("[ApproxBoxes] 尝试方法4: KismetProceduralMeshLibrary")
         kpl = getattr(unreal, "KismetProceduralMeshLibrary", None)
         if not kpl:
             log("[ApproxBoxes] 未找到KismetProceduralMeshLibrary，可能插件未启用")
         else:
             try:
-                section_count = static_mesh.get_num_sections(lod_index)
-            except Exception:
-                section_count = 1
-            for s in range(section_count):
-                verts, tris, normals, tangents, uvs, colors = [], [], [], [], [], []
                 try:
-                    kpl.get_section_from_static_mesh(static_mesh, lod_index, s, verts, tris, normals, tangents, uvs, colors)
-                    for v in verts:
-                        vec = unreal.Vector(v.x, v.y, v.z)
-                        if to_world_transform:
-                            vec = unreal.KismetMathLibrary.transform_location(to_world_transform, vec)
-                        points.append(vec)
-                except Exception as e:
-                    log(f"[ApproxBoxes] Section {s} 提取失败: {e}")
+                    section_count = static_mesh.get_num_sections(lod_index)
+                except Exception:
+                    section_count = 1
+                for s in range(section_count):
+                    verts, tris, normals, tangents, uvs, colors = [], [], [], [], [], []
+                    try:
+                        kpl.get_section_from_static_mesh(static_mesh, lod_index, s, verts, tris, normals, tangents, uvs, colors)
+                        for v in verts:
+                            vec = unreal.Vector(v.x, v.y, v.z)
+                            if to_world_transform:
+                                vec = unreal.KismetMathLibrary.transform_location(to_world_transform, vec)
+                            points.append(vec)
+                    except Exception as e:
+                        log(f"[ApproxBoxes] Section {s} 提取失败: {e}")
+            except Exception as e:
+                log(f"[ApproxBoxes] KismetProceduralMeshLibrary提取失败: {e}")
 
     log(f"[ApproxBoxes] 顶点提取完成，共 {len(points)} 个点。")
     return points
@@ -213,31 +247,126 @@ def get_points_from_static_mesh(static_mesh, lod_index=0, to_world_transform=Non
 
 
 def add_box_component(actor, center_world, extent):
-    """在给定Actor上添加一个BoxComponent（世界空间中心 + extent）。"""
-    # 创建组件
-    try:
-        comp = actor.add_component(unreal.BoxComponent, unreal.Transform(), False, None)
-    except Exception:
-        # 某些版本可能需要不同签名
-        comp = actor.add_component(unreal.BoxComponent, unreal.Transform())
+    """在给定Actor上添加一个BoxComponent（世界空间中心 + extent）。
+    若无法添加组件（某些UE版本/环境下无add_component），则降级为生成一个Cube静态网格Actor作为可视盒体。
+    返回创建的组件或替代的Actor。"""
 
-    # 设置外观与位置
-    try:
-        comp.set_box_extent(extent, False)
-    except Exception:
-        # 旧版本可能无set_box_extent，回退到编辑属性
-        comp.set_editor_property("box_extent", extent)
+    comp = None
+    # 优先尝试使用add_component接口
+    if hasattr(actor, "add_component"):
+        try:
+            comp = actor.add_component(unreal.BoxComponent, unreal.Transform(), False, None)
+        except Exception:
+            try:
+                comp = actor.add_component(unreal.BoxComponent, unreal.Transform())
+            except Exception:
+                comp = None
 
-    comp.set_world_location(center_world)
-    # 交互与碰撞设置（可按需调整）
+    if comp:
+        # 设置外观与位置
+        try:
+            comp.set_box_extent(extent, False)
+        except Exception:
+            try:
+                comp.set_editor_property("box_extent", extent)
+            except Exception:
+                pass
+
+        try:
+            comp.set_world_location(center_world)
+        except Exception:
+            pass
+        # 交互与碰撞设置（可按需调整）
+        try:
+            comp.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
+            comp.set_editor_property("collision_enabled", unreal.CollisionEnabled.QUERY_AND_PHYSICS)
+            comp.set_editor_property("collision_profile_name", "BlockAll")
+        except Exception:
+            pass
+        try:
+            comp.register_component()
+        except Exception:
+            pass
+        return comp
+
+    # 降级方案：生成Cube静态网格Actor替代盒体
+    cube_paths = [
+        "/Engine/BasicShapes/Cube",
+        "/Engine/BasicShapes/Cube.Cube",
+        "/Game/StarterContent/Shapes/Shape_Cube.Shape_Cube",
+    ]
+    cube_asset = None
+    for p in cube_paths:
+        try:
+            cube_asset = unreal.EditorAssetLibrary.load_asset(p)
+        except Exception:
+            cube_asset = None
+        if cube_asset:
+            break
+    if not cube_asset:
+        unreal.log_warning("[ApproxBoxes] 无法加载基础Cube资产，改为仅创建空Actor标记位置。")
+        try:
+            fallback_actor = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.Actor, center_world)
+            try:
+                fallback_actor.set_actor_location(center_world, False, False)
+            except Exception:
+                pass
+            return fallback_actor
+        except Exception:
+            return None
+
     try:
-        comp.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
-        comp.set_editor_property("collision_enabled", unreal.CollisionEnabled.QUERY_AND_PHYSICS)
-        comp.set_editor_property("collision_profile_name", "BlockAll")
-    except Exception:
-        pass
-    comp.register_component()
-    return comp
+        cube_actor = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.StaticMeshActor, center_world)
+        smc = None
+        try:
+            smc = cube_actor.static_mesh_component
+        except Exception:
+            try:
+                comps = cube_actor.get_components_by_class(unreal.StaticMeshComponent)
+                if comps:
+                    smc = comps[0]
+            except Exception:
+                smc = None
+        if smc:
+            try:
+                smc.set_static_mesh(cube_asset)
+            except Exception:
+                try:
+                    smc.set_editor_property("static_mesh", cube_asset)
+                except Exception:
+                    pass
+            # 立方体默认尺寸约100uu，按extent计算缩放
+            size = 100.0
+            scale_vec = unreal.Vector(
+                (extent.x * 2.0) / size,
+                (extent.y * 2.0) / size,
+                (extent.z * 2.0) / size,
+            )
+            try:
+                smc.set_world_scale3d(scale_vec)
+            except Exception:
+                try:
+                    cube_actor.set_actor_scale3d(scale_vec)
+                except Exception:
+                    pass
+            try:
+                cube_actor.set_actor_location(center_world, False, False)
+            except Exception:
+                pass
+            # 碰撞与移动性
+            try:
+                smc.set_editor_property("mobility", unreal.ComponentMobility.MOVABLE)
+            except Exception:
+                pass
+            try:
+                smc.set_editor_property("collision_enabled", unreal.CollisionEnabled.QUERY_AND_PHYSICS)
+                smc.set_editor_property("collision_profile_name", "BlockAll")
+            except Exception:
+                pass
+        return cube_actor
+    except Exception as e:
+        unreal.log_error(f"[ApproxBoxes] 备用CubeActor创建失败: {e}")
+        return None
 
 
 def _add_boxes_from_component_bounds(actor, component, cluster_count=1):
@@ -254,8 +383,80 @@ def _add_boxes_from_component_bounds(actor, component, cluster_count=1):
         except Exception:
             bounds = None
     if not bounds:
-        log("[ApproxBoxes] 无法获取组件Bounds，降级生成失败。")
-        return []
+        # 组件Bounds不可用时，尝试使用 StaticMesh 资产的Bounds作为兜底
+        static_mesh = None
+        try:
+            static_mesh = component.get_static_mesh()
+        except Exception:
+            static_mesh = None
+        if not static_mesh:
+            try:
+                static_mesh = component.get_editor_property("static_mesh")
+            except Exception:
+                static_mesh = None
+        if not static_mesh:
+            static_mesh = getattr(component, "static_mesh", None)
+
+        origin = None
+        box_extent = None
+        if static_mesh:
+            # 资产级Bounds
+            try:
+                b = static_mesh.get_bounds()
+                o = getattr(b, "origin", None)
+                e = getattr(b, "box_extent", None)
+                if isinstance(o, unreal.Vector) and isinstance(e, unreal.Vector):
+                    origin = o
+                    box_extent = e
+            except Exception:
+                pass
+            if (origin is None) or (box_extent is None):
+                try:
+                    b2 = static_mesh.get_editor_property("extended_bounds")
+                    o = getattr(b2, "origin", None)
+                    e = getattr(b2, "box_extent", None)
+                    if isinstance(o, unreal.Vector) and isinstance(e, unreal.Vector):
+                        origin = o
+                        box_extent = e
+                except Exception:
+                    pass
+            if (origin is None) or (box_extent is None):
+                try:
+                    bb = static_mesh.get_editor_property("bounding_box")
+                    mn = getattr(bb, "min", None)
+                    mx = getattr(bb, "max", None)
+                    if isinstance(mn, unreal.Vector) and isinstance(mx, unreal.Vector):
+                        origin = unreal.Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, (mn.z + mx.z) * 0.5)
+                        box_extent = unreal.Vector((mx.x - mn.x) * 0.5, (mx.y - mn.y) * 0.5, (mx.z - mn.z) * 0.5)
+                except Exception:
+                    pass
+
+        if not (isinstance(origin, unreal.Vector) and isinstance(box_extent, unreal.Vector)):
+            log("[ApproxBoxes] 无法通过资产获取Bounds，降级生成失败。")
+            return []
+
+        # 将资产本地Bounds转换到世界（考虑缩放，忽略旋转对轴对齐盒体的影响）
+        to_world = _try_get_world_transform_from_component(component)
+        try:
+            origin_world = unreal.KismetMathLibrary.transform_location(to_world, origin)
+        except Exception:
+            origin_world = origin
+        scale = unreal.Vector(1, 1, 1)
+        try:
+            scale = to_world.get_scale3d()
+        except Exception:
+            try:
+                scale = to_world.scale
+            except Exception:
+                pass
+        box_extent_world = unreal.Vector(
+            abs(box_extent.x) * abs(scale.x),
+            abs(box_extent.y) * abs(scale.y),
+            abs(box_extent.z) * abs(scale.z),
+        )
+
+        # 用资产Bounds继续下面的分割逻辑
+        bounds = type("_Bounds", (), {"origin": origin_world, "box_extent": box_extent_world})()
 
     origin = getattr(bounds, "origin", None)
     box_extent = getattr(bounds, "box_extent", None)
@@ -466,8 +667,54 @@ def generate_approx_boxes_from_asset_path(asset_path, cluster_count=3, lod_index
     identity = unreal.Transform()
     points = get_points_from_static_mesh(static_mesh, lod_index=lod_index, to_world_transform=identity)
     if not points:
-        unreal.log_error("未能从StaticMesh中提取顶点，请检查LOD/Section或启用相关编辑器插件。")
-        return
+        unreal.log_warning("[ApproxBoxes] 未能从StaticMesh中提取顶点，改用临时StaticMeshActor组件Bounds降级生成世界对齐盒体。")
+        # 创建一个临时 StaticMeshActor，并设置其 StaticMeshComponent
+        try:
+            temp_actor = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.StaticMeshActor, unreal.Vector(0, 0, 0))
+        except Exception:
+            temp_actor = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.Actor, unreal.Vector(0, 0, 0))
+
+        # 获取/设置 StaticMeshComponent
+        smc = None
+        try:
+            smc = temp_actor.static_mesh_component
+        except Exception:
+            smc = None
+        if not smc:
+            try:
+                comps = temp_actor.get_components_by_class(unreal.StaticMeshComponent)
+                if comps:
+                    smc = comps[0]
+            except Exception:
+                smc = None
+        if smc:
+            try:
+                smc.set_static_mesh(static_mesh)
+            except Exception:
+                try:
+                    smc.set_editor_property("static_mesh", static_mesh)
+                except Exception:
+                    unreal.log_error("[ApproxBoxes] 无法将StaticMesh设置到组件，降级生成失败。")
+                    return
+            # 注册并刷新Bounds，确保后续可读
+            try:
+                smc.register_component()
+            except Exception:
+                pass
+            try:
+                smc.reregister_component()
+            except Exception:
+                pass
+            try:
+                smc.update_bounds()
+            except Exception:
+                pass
+            # 基于组件Bounds生成盒体
+            _add_boxes_from_component_bounds(temp_actor, smc, max(1, cluster_count))
+            return
+        else:
+            unreal.log_error("[ApproxBoxes] 无法获取StaticMeshComponent，降级生成失败。")
+            return
 
     clusters = kmeans(points, cluster_count)
     log(f"聚类完成，有效簇数量: {len(clusters)}")
@@ -489,34 +736,10 @@ def generate_approx_boxes_from_asset_path(asset_path, cluster_count=3, lod_index
 
 
 if __name__ == "__main__":
-    # 示例：默认对选中Actor执行，K=3
+    # 示例：从资产路径生成近似盒体，无法提取顶点时自动降级到组件Bounds
+    # 示例一：对选中Actor生成近似盒体
     # generate_approx_boxes_from_selected_actor(cluster_count=2, lod_index=0)
-    # import unreal
-
-    # 1. 加载StaticMesh资产
-    asset_path = '/CoveringAPI/Effects/Meshes/Mesh_FX_Car_Black_Wheel_Rear.Mesh_FX_Car_Black_Wheel_Rear'
-    static_mesh = unreal.EditorAssetLibrary.load_asset(asset_path)
-    if not static_mesh:
-        unreal.log_error(f"无法加载StaticMesh资产: {asset_path}")
-    else:
-        # 2. 请求一个UDynamicMesh对象（从GlobalPool）
-        dynamic_mesh = unreal.GeometryScriptLibrary.request_and_release_dynamic_mesh_from_global_pool()
-        if not dynamic_mesh:
-            unreal.log_error("无法获取UDynamicMesh对象")
-        else:
-            # 3. 复制StaticMesh数据到UDynamicMesh
-            success = unreal.GeometryScriptLibrary.copy_mesh_from_static_mesh(dynamic_mesh, static_mesh)
-            if not success:
-                unreal.log_error("复制StaticMesh到UDynamicMesh失败")
-            else:
-                # 4. 获取顶点数量
-                vertex_count = unreal.GeometryScriptLibrary.get_vertex_count(dynamic_mesh)
-                unreal.log(f"顶点数量: {vertex_count}")
-                
-                # 5. 遍历所有顶点，打印顶点位置
-                for vertex_id in range(vertex_count):
-                    vertex_pos = unreal.GeometryScriptLibrary.get_vertex(dynamic_mesh, vertex_id)
-                    unreal.log(f"顶点ID {vertex_id} 位置: {vertex_pos}")
-                    
-            # 6. 释放动态网格对象
-            unreal.GeometryScriptLibrary.return_dynamic_mesh_to_global_pool(dynamic_mesh)
+    #
+    # 示例二：从资产路径生成近似盒体（自动降级）
+    asset_path = '/Game/ResidentialBuildingsSet/Residential_Buildings_011.Residential_Buildings_011'
+    generate_approx_boxes_from_asset_path(asset_path, cluster_count=3, lod_index=0, spawn_new_actor=True)
