@@ -1,0 +1,14 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "D:\\UE5\\UE_5.7\\Engine\\Binaries\\ThirdParty\\Python3\\Win64\\python.exe",
+        "python.analysis.extraPaths": [
+            "D:\\UE5\\UE_5.7\\Engine\\Binaries\\ThirdParty\\Python3\\Win64\\Lib\\site-packages",
+            "R:\\Unreal_Project\\S_Project\\Sun_57\\Intermediate\\PythonStub"
+        ]
+    }
+}
