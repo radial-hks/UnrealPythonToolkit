@@ -1,3 +1,8 @@
+# form google ai mode
+# https://dev.epicgames.com/community/snippets/dV5/add-a-component-with-blueprint-script-in-the-editor
+# https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Editor/SubobjectDataInterface/USubobjectDataSubsystem
+# https://www.unrealcode.net/PythonScripting
+
 import unreal
 
 # 1. 获取 SubobjectDataSubsystem 实例

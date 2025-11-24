@@ -10,6 +10,8 @@
 - **`remove_tag.py`** - 移除Actor的标签
 - **`generate_approx_boxes.py`** - 近似盒体自动生成（聚类 + BoxComponent/Cube降级）
 - **`export_mesh_vertices.py`** - 导出StaticMesh顶点到CSV（基于 ProceduralMeshLibrary）
+- **`add_ProceduralMeshComponent.py`** - 为选中的Actor添加ProceduralMeshComponent组件
+- **`create_proc_mesh_from_json.py`** - 从JSON文件创建程序化网格体Actor
 
 ## 🚀 使用方法
 
@@ -17,6 +19,42 @@
 ```python
 exec(open("actor_tools/get_actor_name.py").read())
 ```
+
+### 添加ProceduralMeshComponent组件
+
+为场景中选中的所有Actor添加ProceduralMeshComponent组件：
+```python
+exec(open("actor_tools/add_ProceduralMeshComponent.py").read())
+```
+
+该脚本将：
+1. 获取所有选中的Actor
+2. 使用SubobjectDataSubsystem添加ProceduralMeshComponent组件
+3. 自动重命名组件为"MyProceduralMesh"
+4. 保存Actor改动
+
+### 从JSON创建程序化网格体
+
+从JSON文件创建带有网格体数据的新Actor：
+
+首先准备JSON文件（包含顶点和多边形数据）：
+```json
+{
+  "vertices": [[x1, y1, z1], [x2, y2, z2], ...],
+  "polygons": [[v0, v1, v2], [v0, v2, v3], ...]
+}
+```
+
+然后在脚本中配置路径和运行：
+```python
+exec(open("actor_tools/create_proc_mesh_from_json.py").read())
+```
+
+配置项（在脚本顶部）：
+- `json_path` - JSON文件路径
+- `actor_name` - 创建的Actor名称
+- `spawn_location` - Actor生成位置（unreal.Vector）
+- `material_path` - 材质资产路径
 
 ### 近似盒体生成（聚类 + BoxComponent / Cube降级）
 
@@ -58,6 +96,8 @@ exec(open("actor_tools/export_mesh_vertices.py").read())
 - **数据处理** - 导出为CSV格式便于分析
 - **近似盒体生成** - 对静态网格进行聚类与AABB计算，自动生成多个近似盒体（支持无顶点API环境的降级）
 - **顶点导出** - 从StaticMesh提取顶点并导出为CSV
+- **ProceduralMeshComponent管理** - 为Actor添加和配置程序化网格组件
+- **程序化网格体创建** - 从JSON文件数据创建带有自定义网格的Actor
 
 ## ⚠️ 注意事项
 
